@@ -3,8 +3,6 @@ from __future__ import unicode_literals, division
 
 import json
 
-from flask import request
-from flask.ext.restful import Resource
 from gevent.event import Event
 from gevent.queue import Queue, Empty
 from gevent.select import select
@@ -41,6 +39,33 @@ def start_websocket():
     uwsgi.websocket_handshake(env['HTTP_SEC_WEBSOCKET_KEY'], env.get('HTTP_ORIGIN', ''))  # engage in websocket
 
     _websocket_handlers['_websocket_listen'] = spawn(listen)  # Spawn greenlet that will listen to fd
+
+    while True:
+        ready = wait([_websocket_send_event, _websocket_recv_event, _websocket_disconnect_event], None, 1)  # wait for events
+        if ready:  # an event was set
+            if ready[0] == _websocket_recv_event:
+                msg = uwsgi.websocket_recv_nb()
+                if msg is not None:
+                    json_msg = json.loads(msg)
+                    if json_msg['namespace'] == "celery":
+                        pass
+                _websocket_recv_event.clear()
+            elif ready[0] == _websocket_send_event:  # One or more handlers requested a message to be sent
+                while True:
+                    try:
+                        msg = _websocket_recv_queue.get_nowait()
+                    except Empty:
+                        break
+                    uwsgi.websocket_send(msg)
+                _websocket_send_event.clear()
+            elif ready[0] == _websocket_disconnect_event:  # One or more handlers finished
+                while True:
+                    try:
+                        disconnect_handler = _websocket_disconnect_queue.get_nowait()
+                    except Empty:
+                        break
+                    _websocket_handlers.pop(disconnect_handler)
+                _websocket_disconnect_event.clear()
 
 
 def add_websockets_route(app):
