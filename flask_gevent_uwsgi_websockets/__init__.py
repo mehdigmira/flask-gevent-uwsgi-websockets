@@ -73,7 +73,6 @@ def _start_websocket():
                     _kill_all()
                     return
                 if msg:
-                    print msg
                     json_msg = json.loads(msg)
                     handler = _websocket_handlers[json_msg['namespace']]
                     handler.go(json_msg)
