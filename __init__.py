@@ -29,7 +29,6 @@ else:
 def _listen():
     while True:
         select([_websocket_fd], [], [])  # select fd
-        print("set recv")
         _websocket_recv_event.set()
 
 
@@ -53,8 +52,8 @@ def _start_websocket():
                 msg = uwsgi.websocket_recv_nb()
                 if msg is not None:
                     json_msg = json.loads(msg)
-                    if json_msg['namespace'] == "celery":
-                        pass
+                    handler = _websocket_handlers[json_msg['namespace']]
+                    handler.go(json_msg)
                 _websocket_recv_event.clear()
             elif ready[0] == _websocket_send_event:  # One or more handlers requested a message to be sent
                 while True:
@@ -81,7 +80,18 @@ def add_websockets_route(app):
 def websocket_handler(name):
     def decorator(func):
         handler = WebsocketHandler(name)
-        handler.run = func
+        _websocket_handlers[name] = handler
+        def run_func(*args):
+            handler.is_running = True
+            try:
+                func(*args)
+            except:
+                raise
+            finally:
+                handler.is_running = False
+        handler.run = run_func
+        return handler
+    return decorator
 
 
 class WebsocketHandler:
@@ -90,9 +100,10 @@ class WebsocketHandler:
         self.message_queue = Queue()
         self.run = None
         self.greenlet = None
+        self.is_running = False
 
     def spawn(self):
-        _websocket_handlers[self.name] = spawn(self.run, self)
+        self.greenlet = spawn(self.run, self)
 
     def get(self):
         return self.message_queue.get()
@@ -100,6 +111,15 @@ class WebsocketHandler:
     def send(self, msg):
         _websocket_send_queue.put(json.dumps(msg))
         _websocket_send_event.set()
+
+    def go(self, msg):
+        self.message_queue.put(msg)
+        if not self.is_running:
+            self.spawn()
+
+    def kill(self):
+        if self.is_running:
+            self.greenlet.kill()
 
     def run(self, *args, **kwargs):
         raise Exception("run method in WebsocketHandler must be overridden")
