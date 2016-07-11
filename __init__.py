@@ -78,3 +78,28 @@ def add_websockets_route(app):
     app.add_url_rule('/websockets', 'websockets', _start_websocket)
 
 
+def websocket_handler(name):
+    def decorator(func):
+        handler = WebsocketHandler(name)
+        handler.run = func
+
+
+class WebsocketHandler:
+    def __init__(self, name):
+        self.name = name
+        self.message_queue = Queue()
+        self.run = None
+        self.greenlet = None
+
+    def spawn(self):
+        _websocket_handlers[self.name] = spawn(self.run, self)
+
+    def get(self):
+        return self.message_queue.get()
+
+    def send(self, msg):
+        _websocket_send_queue.put(json.dumps(msg))
+        _websocket_send_event.set()
+
+    def run(self, *args, **kwargs):
+        raise Exception("run method in WebsocketHandler must be overridden")
