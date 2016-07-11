@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/flask_gevent_uwsgi_websockets.iml" filepath="$PROJECT_DIR$/.idea/flask_gevent_uwsgi_websockets.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../flask-gevent-uwsgi-websockets/.idea/flask_gevent_uwsgi_websockets.iml" filepath="$PROJECT_DIR$/../flask-gevent-uwsgi-websockets/.idea/flask_gevent_uwsgi_websockets.iml" />
     </modules>
   </component>
 </project>

@@ -79,7 +79,7 @@ def add_websockets_route(app):
 
 def websocket_handler(name):
     def decorator(func):
-        handler = WebsocketHandler(name)
+        handler = _WebsocketHandler(name)
         _websocket_handlers[name] = handler
         def run_func(*args):
             handler.is_running = True
@@ -94,7 +94,7 @@ def websocket_handler(name):
     return decorator
 
 
-class WebsocketHandler:
+class _WebsocketHandler:
     def __init__(self, name):
         self.name = name
         self.message_queue = Queue()
