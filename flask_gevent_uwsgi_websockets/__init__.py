@@ -27,8 +27,8 @@ else:
 
 def _listen(websocket_fd):
     while True:
-        select([websocket_fd], [], [])  # select fd
-        print 'recv'
+        # select fd with a 3s timeout, so that we can ping client from time to time
+        select([websocket_fd], [], [], timeout=3)
         _websocket_recv_event.set()
 
 
@@ -45,21 +45,19 @@ def _start_websocket():
 
     _websocket_handlers['_websocket_listen'] = spawn(_listen, uwsgi.connection_fd())  # Spawn greenlet that will listen to fd
 
-    import sys
-    sys.path.append('/home/mehdi/pycharm-5.0.5/debug-eggs/pycharm-debug.egg')
-    import pydevd as pydevd
-    pydevd.settrace('localhost', port=8000, stdoutToServer=True, stderrToServer=True)
-
-
     while True:
         ready = wait([_websocket_send_event, _websocket_recv_event, _websocket_disconnect_event], None, 1)  # wait for events
         if ready:  # an event was set
             if ready[0] == _websocket_recv_event:
-                msg = uwsgi.websocket_recv_nb()
-                if msg is not None:
+                try:
+                    msg = uwsgi.websocket_recv_nb()
+                except IOError:
+                    _kill_all()
+                    return
+                if msg:
                     print msg
                     json_msg = json.loads(msg)
-                    handler = _websocket_handlers[json_msg['namespacespace']]
+                    handler = _websocket_handlers[json_msg['namespace']]
                     handler.go(json_msg)
                 _websocket_recv_event.clear()
             elif ready[0] == _websocket_send_event:  # One or more handlers requested a message to be sent
