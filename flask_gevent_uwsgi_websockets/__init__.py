@@ -16,16 +16,20 @@ else:
 
     _websocket_send_event = Event()
     _websocket_recv_event = Event()
-    _websocket_disconnect_event = Event()
 
     _websocket_send_queue = Queue()
     _websocket_recv_queue = Queue()
-    _websocket_disconnect_queue = Queue()
 
     _websocket_handlers = {'_websocket_listen': None}
 
 
 def _listen(websocket_fd):
+    """
+    This will listen to the websocket file descriptor in a gevent-friendly way, and notify when the fd is ready
+
+    :param websocket_fd: the websocket file descriptor
+    :return:
+    """
     while True:
         # select fd with a 3s timeout, so that we can ping client from time to time
         select([websocket_fd], [], [], timeout=3)
@@ -33,11 +37,25 @@ def _listen(websocket_fd):
 
 
 def _kill_all():
+    """
+    This will kill all spawned handlers
+    :return:
+    """
     for handler in _websocket_handlers.values():
         handler.kill()
 
 
 def _start_websocket():
+    """
+    This is the most important piece of the code. It's the only one that is allowed to use the uwsgi websocket api.
+    It deals with receiving:
+    - spawn a _listen greenlet
+    _ when notified that the websocket fd is ready, it will fetch the message, and push it to the right handler
+    and writing:
+    - spawns a handler whenever necessary
+    - when notified that a handler wants to writes, does the writing
+    :return:
+    """
     assert request.headers.get('Upgrade') == "websocket", "/websockets is only available for websocket protocol"
     assert uwsgi is not None, "You must run your app using uwsgi if you want to use the /websockets route"
     env = request.headers.environ
@@ -46,7 +64,7 @@ def _start_websocket():
     _websocket_handlers['_websocket_listen'] = spawn(_listen, uwsgi.connection_fd())  # Spawn greenlet that will listen to fd
 
     while True:
-        ready = wait([_websocket_send_event, _websocket_recv_event, _websocket_disconnect_event], None, 1)  # wait for events
+        ready = wait([_websocket_send_event, _websocket_recv_event], None, 1)  # wait for events
         if ready:  # an event was set
             if ready[0] == _websocket_recv_event:
                 try:
@@ -68,17 +86,15 @@ def _start_websocket():
                         break
                     uwsgi.websocket_send(json.dumps(msg))
                 _websocket_send_event.clear()
-            elif ready[0] == _websocket_disconnect_event:  # One or more handlers finished
-                while True:
-                    try:
-                        disconnect_handler = _websocket_disconnect_queue.get_nowait()
-                    except Empty:
-                        break
-                    _websocket_handlers.pop(disconnect_handler)
-                _websocket_disconnect_event.clear()
 
 
 def add_websockets_route(app):
+    """
+    adds the websockets route to the flask app, and monkey patches the wsgi app, so that when a ws connection
+    is required, flask doesn't send the http headers.
+    :param app: flask app
+    :return:
+    """
     app.add_url_rule('/websockets', 'websockets', _start_websocket)
 
     def patch_app_for_websockets(app):
@@ -99,9 +115,18 @@ def add_websockets_route(app):
 
 
 def websocket_handler(namespace):
+    """
+    the handler decorator
+    :param namespace: the namespace for which you're building a handler
+    :return:
+    """
     def decorator(func):
         handler = _WebsocketHandler(namespace)
-        _websocket_handlers[namespace] = handler
+        try:
+            _websocket_handlers[namespace] = handler
+        except NameError:
+            raise Exception("You must run your app using uwsgi if you want to use the /websockets route")
+
         def run_func(*args):
             handler.is_running = True
             try:
@@ -116,6 +141,10 @@ def websocket_handler(namespace):
 
 
 class _WebsocketHandler:
+    """
+    Websocket handler class. Holds some useful information, and provides a nice api
+     to communicate withe the main greenlet (_start_websocket)
+    """
     def __init__(self, namespace):
         self.namespace = namespace
         self.message_queue = Queue()
