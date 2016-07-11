@@ -13,7 +13,6 @@ try:
 except ImportError:
     uwsgi = None
 else:
-    _websocket_fd = uwsgi.connection_fd()
 
     _websocket_send_event = Event()
     _websocket_recv_event = Event()
@@ -26,9 +25,10 @@ else:
     _websocket_handlers = {'_websocket_listen': None}
 
 
-def _listen():
+def _listen(websocket_fd):
     while True:
-        select([_websocket_fd], [], [])  # select fd
+        select([websocket_fd], [], [])  # select fd
+        print 'recv'
         _websocket_recv_event.set()
 
 
@@ -43,7 +43,13 @@ def _start_websocket():
     env = request.headers.environ
     uwsgi.websocket_handshake(env['HTTP_SEC_WEBSOCKET_KEY'], env.get('HTTP_ORIGIN', ''))  # engage in websocket
 
-    _websocket_handlers['_websocket_listen'] = spawn(_listen)  # Spawn greenlet that will listen to fd
+    _websocket_handlers['_websocket_listen'] = spawn(_listen, uwsgi.connection_fd())  # Spawn greenlet that will listen to fd
+
+    import sys
+    sys.path.append('/home/mehdi/pycharm-5.0.5/debug-eggs/pycharm-debug.egg')
+    import pydevd as pydevd
+    pydevd.settrace('localhost', port=8000, stdoutToServer=True, stderrToServer=True)
+
 
     while True:
         ready = wait([_websocket_send_event, _websocket_recv_event, _websocket_disconnect_event], None, 1)  # wait for events
@@ -51,17 +57,18 @@ def _start_websocket():
             if ready[0] == _websocket_recv_event:
                 msg = uwsgi.websocket_recv_nb()
                 if msg is not None:
+                    print msg
                     json_msg = json.loads(msg)
-                    handler = _websocket_handlers[json_msg['namespace']]
+                    handler = _websocket_handlers[json_msg['namespacespace']]
                     handler.go(json_msg)
                 _websocket_recv_event.clear()
             elif ready[0] == _websocket_send_event:  # One or more handlers requested a message to be sent
                 while True:
                     try:
-                        msg = _websocket_recv_queue.get_nowait()
+                        msg = _websocket_send_queue.get_nowait()
                     except Empty:
                         break
-                    uwsgi.websocket_send(msg)
+                    uwsgi.websocket_send(json.dumps(msg))
                 _websocket_send_event.clear()
             elif ready[0] == _websocket_disconnect_event:  # One or more handlers finished
                 while True:
@@ -76,11 +83,27 @@ def _start_websocket():
 def add_websockets_route(app):
     app.add_url_rule('/websockets', 'websockets', _start_websocket)
 
+    def patch_app_for_websockets(app):
+        def fake_start_response(*args):
+            pass
 
-def websocket_handler(name):
+        def application(environ, start_response):
+            # user wants a websocket connection, do not send the usual http headers
+            if environ['HTTP_UPGRADE'] == 'websocket':
+                return app(environ, fake_start_response)
+            return app(environ, start_response)
+
+        return application
+
+    app.wsgi_app = patch_app_for_websockets(app.wsgi_app)
+
+    return app
+
+
+def websocket_handler(namespace):
     def decorator(func):
-        handler = _WebsocketHandler(name)
-        _websocket_handlers[name] = handler
+        handler = _WebsocketHandler(namespace)
+        _websocket_handlers[namespace] = handler
         def run_func(*args):
             handler.is_running = True
             try:
@@ -95,8 +118,8 @@ def websocket_handler(name):
 
 
 class _WebsocketHandler:
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, namespace):
+        self.namespace = namespace
         self.message_queue = Queue()
         self.run = None
         self.greenlet = None
@@ -109,7 +132,7 @@ class _WebsocketHandler:
         return self.message_queue.get()
 
     def send(self, msg):
-        _websocket_send_queue.put(json.dumps(msg))
+        _websocket_send_queue.put(msg)
         _websocket_send_event.set()
 
     def go(self, msg):

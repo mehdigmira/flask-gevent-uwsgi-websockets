@@ -5,7 +5,7 @@ app = Flask(__name__)
 app = add_websockets_route(app)
 
 
-@websocket_handler(name='echo')
+@websocket_handler(namespace='echo')
 def echo(ws):
     while True:
         msg = ws.get()
@@ -13,6 +13,3 @@ def echo(ws):
             ws.send(msg)
         else:
             return
-
-if __name__ == '__main__':
-    app.run(debug=True, gevent=100)
