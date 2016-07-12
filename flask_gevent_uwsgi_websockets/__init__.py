@@ -18,7 +18,6 @@ else:
     _websocket_recv_event = Event()
 
     _websocket_send_queue = Queue()
-    _websocket_recv_queue = Queue()
 
     _websocket_handlers = {'_websocket_listen': None}
 
